@@ -39,15 +39,20 @@ if (process.env.AWS_BEARER_TOKEN_BEDROCK) {
   console.log('Using Claude Code built-in auth');
 }
 
-// Load skill files once at startup so the agent has full authoring knowledge
+// Load reference files once at startup so the agent has full pipeline knowledge
 const SKILL_BASE = join(REPO_PATH, '.claude/skills/build-content-from-figma');
-const skillContent = {
-  skill: readFileSync(join(SKILL_BASE, 'SKILL.md'), 'utf8'),
-  authoringPattern: readFileSync(join(SKILL_BASE, 'references/authoring-pattern.md'), 'utf8'),
+const REF_BASE = join(REPO_PATH, 'tools/figma-to-da/server/references');
+const pipelineRefs = {
+  blockInventory: readFileSync(join(REF_BASE, 'block-inventory.md'), 'utf8'),
+  miloBlockInventory: readFileSync(join(REF_BASE, 'milo-block-inventory.md'), 'utf8'),
+  c1BlockCreation: readFileSync(join(REF_BASE, 'c1-block-creation.md'), 'utf8'),
+  c1AuthoringPattern: readFileSync(join(REF_BASE, 'c1-authoring-pattern.md'), 'utf8'),
+};
+const legacyRefs = {
   tokenMapping: readFileSync(join(SKILL_BASE, 'references/token-mapping.md'), 'utf8'),
   extractor: readFileSync(join(SKILL_BASE, 'agents/figma-content-extractor.md'), 'utf8'),
 };
-console.log('Skill files loaded from', SKILL_BASE);
+console.log('Pipeline reference files loaded from', REF_BASE);
 
 const FIGMA_TOKEN = process.env.FIGMA_TOKEN || '';
 console.log('Figma REST API:', FIGMA_TOKEN ? 'enabled (FIGMA_TOKEN set)' : 'disabled (set FIGMA_TOKEN env var to enable)');
@@ -82,7 +87,6 @@ app.get('/jobs/:id', (req, res) => {
 });
 
 function buildPrompt(figmaUrl, org, site, username, token) {
-  // Parse fileKey and nodeId from the Figma URL for REST API fallback
   const figmaFileMatch = figmaUrl.match(/figma\.com\/(?:design|file)\/([^/?#]+)/);
   const figmaFileKey = figmaFileMatch ? figmaFileMatch[1] : '';
   const figmaNodeMatch = figmaUrl.match(/node-id=([^&]+)/);
@@ -93,35 +97,29 @@ function buildPrompt(figmaUrl, org, site, username, token) {
 
 A Figma personal access token is available. Use the REST API to extract design content:
 
-  # Get file metadata (title, frames)
+  # Get file metadata and top-level frames
   curl -s "https://api.figma.com/v1/files/${figmaFileKey}" \\
-    -H "X-Figma-Token: ${FIGMA_TOKEN}" | head -c 4000
+    -H "X-Figma-Token: ${FIGMA_TOKEN}" | head -c 8000
 
   # Get specific node content (text, fills, children)
   curl -s "https://api.figma.com/v1/files/${figmaFileKey}/nodes?ids=${figmaNodeId}" \\
     -H "X-Figma-Token: ${FIGMA_TOKEN}"
 
-  # Export node as image (PNG or SVG)
-  curl -s "https://api.figma.com/v1/images/${figmaFileKey}?ids=${figmaNodeId}&format=png" \\
+  # Export a node as image
+  curl -s "https://api.figma.com/v1/images/${figmaFileKey}?ids=<nodeId>&format=png" \\
     -H "X-Figma-Token: ${FIGMA_TOKEN}"
 
-Use these to extract text content, background colors, and image assets. The node structure
-gives you text layers, fills (colors/images), and component names. Derive heading levels and
-body sizes from the layer names and visual hierarchy (see token-mapping reference below).
-
-If Figma MCP tools (get_design_context, get_metadata) ARE available in this session, prefer
-them over the REST API for richer output.`
+If Figma MCP tools (get_design_context, get_metadata) ARE available in this session,
+prefer them over the REST API for richer output.`
     : `### Figma access — MCP only
 
-No FIGMA_TOKEN env var is set. Attempt to use Figma MCP tools (get_design_context,
-get_metadata, get_screenshot). If they are not available in this session, extract as much
-as possible from the Figma URL structure and any publicly accessible metadata.`;
+No FIGMA_TOKEN env var is set. Use Figma MCP tools (get_design_context, get_metadata,
+get_screenshot). If they are not available, extract what is possible from the URL.`;
 
   return `## AUTOMATED MODE — non-interactive execution
 
-You are running the build-content-from-figma skill fully automated for the DA app.
-Skip every "STOP", "BLOCKING", and "wait for user confirmation" gate.
-Proceed through all phases without pausing.
+This pipeline runs fully automated. Skip every "STOP", "BLOCKING", and
+"wait for user confirmation" gate. Proceed through all phases without pausing.
 
 ### Inputs (pre-filled — do not ask for these)
 
@@ -130,73 +128,228 @@ Proceed through all phases without pausing.
 - Figma node ID: ${figmaNodeId}
 - DA org: ${org}
 - DA site (repo): ${site}
-- DA path: drafts/${username}/<slug>  ← derive <slug> as kebab-case from the Figma frame name
+- DA username: ${username}
 - DA token: ${token}
+- REPO_PATH: ${REPO_PATH}
 
 ### Auth override
 
-Never call da-auth-helper. Use the DA token above directly for every admin.da.live and
-admin.hlx.page request:
-
+Never call da-auth-helper. Use the DA token above directly:
   curl ... -H "Authorization: Bearer ${token}" ...
-
-${figmaAccessInstructions}
 
 ### Git override
 
-Do NOT create git branches, do NOT commit, do NOT push. This is content authoring only.
-Skip Phase 6a (upload plan confirmation) and Phase 7a (preview/publish question) — proceed automatically.
-
-### Phase 1 override (no user interaction)
-
-- Extract the frame name from the Figma file (via REST API or MCP).
-- Derive block name and slug from the frame name automatically (kebab-case).
-- Set DA destination: org=${org}, repo=${site}, path=drafts/${username}/<slug>.html
-
-### Preview fallback (IMPORTANT)
-
-After a successful upload (Phase 6), attempt preview via:
-  POST https://admin.hlx.page/preview/${org}/${site}/main/drafts/${username}/<slug>
-
-If this returns 404 or any non-200 status, do NOT treat it as a fatal error.
-Instead, output:
-  PREVIEW_URL=https://da.live/edit#/${org}/${site}/drafts/${username}/<slug>
-
-The DA edit URL is a valid result — the user can open it, review the content, and
-publish from the DA editor.
+Do NOT create git branches, do NOT commit, do NOT push.
 
 ### Output requirement
 
 Your FINAL line of output must be exactly:
   PREVIEW_URL=<url>
 
-where <url> is either the aem.page preview URL (if preview succeeded) or the
-da.live edit URL (if preview returned 404). Only output PREVIEW_URL=error if
-the DA upload itself failed (Phase 6).
+where <url> is:
+- The aem.page preview URL if preview succeeded (Phase 4b returns 200)
+- The da.live edit URL if preview returned non-200:
+  https://da.live/edit#/${org}/${site}/drafts/${username}/<slug>
+- The literal string "error" (PREVIEW_URL=error) only if the DA HTML upload
+  itself failed (Phase 4a returned non-200)
+
+${figmaAccessInstructions}
 
 ---
 
-## Skill content
+## Phase 0 — Design Analysis
 
-${skillContent.skill}
+Read the full Figma design to identify all major page sections.
+
+1. Call get_design_context (or get_metadata + REST API) on the root frame at:
+   ${figmaUrl}
+
+2. Examine the top-level children of the root frame — these are the horizontal
+   sections/bands of the page, read top-to-bottom.
+
+3. For each section, identify:
+   - Visual pattern: layout shape, number of columns, content types present
+   - Compare against BOTH block inventories below (hub-* first, then Milo standard library)
+   - Assign: existing block name + variants, OR "NEW: hub-<descriptive-noun>"
+
+4. Matching priority:
+   a. hub-* blocks first (custom-styled for this site)
+   b. Milo standard blocks (accordion, tabs, text, columns, etc.) when no hub-* fits
+   c. "NEW: hub-<name>" only when neither library covers the pattern
+
+5. Bias STRONGLY toward existing blocks. Only mark NEW when no existing block
+   + variant combination covers the visual pattern.
+
+5. Derive the page slug from the Figma frame/file name (kebab-case, lowercase).
+   Example: "Hub — A.com" → "hub-acom"
+
+6. Output a JSON page plan (in a code block) before proceeding:
+   [
+     { "section": "hero", "block": "hub-hero", "variants": [] },
+     { "section": "trust strip", "block": "hub-marquee", "variants": ["dark"] },
+     { "section": "promo panel", "block": "hub-featured", "variants": ["media-right"] },
+     { "section": "app grid", "block": "hub-cards", "variants": [] },
+     { "section": "metrics", "block": "hub-stats", "variants": [] },
+     { "section": "cta band", "block": "hub-cta", "variants": [] }
+   ]
 
 ---
 
-## Authoring pattern reference
+## Phase 1 — Build New Blocks
 
-${skillContent.authoringPattern}
+Check the page plan for any entries where "block" starts with "NEW:".
+
+If NONE: skip Phase 1 entirely and proceed to Phase 2.
+
+If any NEW blocks exist:
+1. Read these two existing blocks as structural reference:
+   ${REPO_PATH}/blocks/hub-hero/hub-hero.js
+   ${REPO_PATH}/blocks/hub-featured/hub-featured.js
+
+2. For each NEW block (e.g., "hub-promo"):
+   a. From Phase 0, identify the section's column structure and content types
+      in the Figma design.
+   b. Use the Write tool to create:
+      ${REPO_PATH}/blocks/<name>/<name>.js  (C1 decorate() pattern)
+      ${REPO_PATH}/blocks/<name>/<name>.css  (hub-* CSS conventions)
+   c. Follow the C1 Block Creation Guide reference below exactly.
+   d. Use the Write tool (NOT bash/heredoc) for both files.
 
 ---
 
-## Token mapping reference
+## Phase 2 — Extract Figma Content
 
-${skillContent.tokenMapping}
+For each section in the page plan (in order):
+1. Use get_design_context on the Figma frame/child node for that section.
+   If the full file was already read in Phase 0, re-use that data where possible.
+2. Apply the Figma Content Extractor procedure (reference below).
+3. Use visual heuristics for typography (largest bold text = heading, etc.)
+   since C1 blocks do not use --s2a- tokens.
+4. Record: heading text + level, body text, eyebrow text (if any),
+   CTA link texts + styles (primary/secondary/plain),
+   media asset URLs + node IDs, background color (if any).
+5. Do NOT download any assets yet — capture URLs and node IDs only.
 
 ---
 
-## Figma content extractor (apply this for Phase 2)
+## Phase 3 — Assemble DA HTML
 
-${skillContent.extractor}
+### 3a. Download Figma media assets
+
+For each media asset (background images, product images, icons, logos) collected
+in Phase 2:
+
+  mkdir -p /tmp/figma-media/<slug>
+  mkdir -p /tmp/da-upload/drafts/${username}
+  curl -sL "<figma-asset-url>" -o /tmp/figma-media/<slug>/<descriptive-filename>
+
+Verify type: file /tmp/figma-media/<slug>/<descriptive-filename>
+Add the correct extension (.png, .jpg, .svg) based on the file command output.
+
+### 3b. Upload assets to DA shadow folder
+
+Upload each asset. Run uploads in parallel where possible.
+
+  curl -s -w "\\n%{http_code}" -X POST \\
+    "https://admin.da.live/source/${org}/${site}/drafts/${username}/.<slug>/<filename>" \\
+    -H "Authorization: Bearer ${token}" \\
+    -F "data=@/tmp/figma-media/<slug>/<filename>;type=<mime-type>"
+
+MIME types: .png → image/png, .jpg → image/jpeg, .svg → image/svg+xml
+Expect 201 Created. The final content.da.live asset URL is:
+  https://content.da.live/${org}/${site}/drafts/${username}/.<slug>/<filename>
+
+### 3c. Build the DA HTML document
+
+Use the C1 Authoring Pattern reference below. Key rules:
+- One <div> per section/block inside <main>
+- Each div contains one <table> with the block name in the first row
+- Block name format: "Hub Hero", "Hub Featured (dark, media-right)", etc.
+- Use content.da.live URLs for all images
+- Use https://www.adobe.com/ as placeholder for all link hrefs
+- NO foundation:c2 metadata, NO viewport rows
+- NO section-metadata EXCEPT for Tabs/Carousel — see "Special Milo block patterns"
+  in the C1 Authoring Pattern reference for how to author those blocks
+
+Use the Write tool to save the complete HTML to:
+  /tmp/da-upload/drafts/${username}/<slug>.html
+
+---
+
+## Phase 4 — Upload, Preview, Publish
+
+### 4a. Upload HTML
+
+  curl -s -w "\\n%{http_code}" -X POST \\
+    "https://admin.da.live/source/${org}/${site}/drafts/${username}/<slug>.html" \\
+    -H "Authorization: Bearer ${token}" \\
+    -H "Content-Type: text/html" \\
+    --data-binary @/tmp/da-upload/drafts/${username}/<slug>.html
+
+Expect 200 or 201.
+
+### 4b. Preview
+
+  curl -s -w "\\n%{http_code}" -X POST \\
+    "https://admin.hlx.page/preview/${org}/${site}/main/drafts/${username}/<slug>" \\
+    -H "Authorization: Bearer ${token}"
+
+On 200: PREVIEW_URL=https://main--${site}--${org}.aem.page/drafts/${username}/<slug>
+On non-200: PREVIEW_URL=https://da.live/edit#/${org}/${site}/drafts/${username}/<slug>
+
+### 4c. Publish (only if preview succeeded)
+
+  curl -s -w "\\n%{http_code}" -X POST \\
+    "https://admin.hlx.page/live/${org}/${site}/main/drafts/${username}/<slug>" \\
+    -H "Authorization: Bearer ${token}"
+
+### 4d. Final output
+
+Output a brief summary of what was produced:
+- Page slug and DA path
+- Blocks used (from page plan)
+- Any new blocks created (file paths)
+- Any assets uploaded
+- Placeholder link reminder
+
+Then output as the FINAL line:
+  PREVIEW_URL=<url>
+
+---
+
+## Reference: Hub-* Block Inventory (custom, proto-muse)
+
+${pipelineRefs.blockInventory}
+
+---
+
+## Reference: Milo Block Inventory (standard library)
+
+${pipelineRefs.miloBlockInventory}
+
+---
+
+## Reference: C1 Block Creation Guide
+
+${pipelineRefs.c1BlockCreation}
+
+---
+
+## Reference: C1 Authoring Pattern
+
+${pipelineRefs.c1AuthoringPattern}
+
+---
+
+## Reference: Token Mapping (visual heuristics)
+
+${legacyRefs.tokenMapping}
+
+---
+
+## Reference: Figma Content Extractor
+
+${legacyRefs.extractor}
 `;
 }
 
@@ -246,14 +399,26 @@ async function runAgent(jobId, figmaUrl, daContext) {
         const input = JSON.stringify(tool.input ?? '');
         const current = jobs.get(jobId);
         let stage = current?.stage ?? 0;
-        if (name.startsWith('mcp__plugin_figma') || input.includes('api.figma.com')) {
-          stage = Math.max(stage, 0);
-        } else if ((name === 'Write' || name === 'Edit') && stage < 1) {
-          stage = 1;
-        } else if (name === 'Bash' && input.includes('admin.da.live')) {
-          stage = Math.max(stage, 2);
-        } else if (name === 'Bash' && input.includes('admin.hlx.page')) {
+        const isFigma = name.startsWith('mcp__plugin_figma') || input.includes('api.figma.com');
+        if (isFigma) {
+          // Stage 0: first Figma reads (design analysis)
+          // Stage 2: Figma reads after block creation (content extraction)
+          stage = Math.max(stage, stage >= 1 ? 2 : 0);
+        } else if ((name === 'Write' || name === 'Edit') && input.includes('/blocks/')) {
+          // Stage 1: writing new block files
+          stage = Math.max(stage, 1);
+        } else if (
+          ((name === 'Write' || name === 'Edit') && input.includes('/tmp/'))
+          || (name === 'Bash' && input.includes('admin.da.live') && !input.includes('.html'))
+        ) {
+          // Stage 3: assembling HTML or uploading assets to DA shadow folder
           stage = Math.max(stage, 3);
+        } else if (name === 'Bash' && (
+          (input.includes('admin.da.live') && input.includes('.html'))
+          || input.includes('admin.hlx.page')
+        )) {
+          // Stage 4: uploading HTML doc or triggering preview/live
+          stage = Math.max(stage, 4);
         }
         if (stage !== current?.stage) {
           jobs.set(jobId, { ...current, stage });

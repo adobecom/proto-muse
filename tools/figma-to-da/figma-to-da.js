@@ -4,10 +4,11 @@ const STORAGE_KEY = 'figma-to-da:serverUrl';
 const POLL_INTERVAL = 3000;
 
 const STAGES = [
-  { id: 'extract', label: 'Extracting design content' },
-  { id: 'generate', label: 'Building document' },
-  { id: 'upload', label: 'Uploading to DA' },
-  { id: 'publish', label: 'Previewing & publishing' },
+  { id: 'analyze',      label: 'Analyzing design' },
+  { id: 'build-blocks', label: 'Building new blocks' },
+  { id: 'extract',      label: 'Extracting content' },
+  { id: 'assemble',     label: 'Building document' },
+  { id: 'upload',       label: 'Uploading & previewing' },
 ];
 
 function el(tag, attrs = {}, ...children) {
