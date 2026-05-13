@@ -24,7 +24,7 @@ function el(tag, attrs = {}, ...children) {
   return node;
 }
 
-function buildUI(context) {
+function buildUI(context, token) {
   const link = el('link', { rel: 'stylesheet', href: '/tools/figma-to-da/figma-to-da.css' });
   document.head.append(link);
 
@@ -230,7 +230,7 @@ function buildUI(context) {
       const res = await fetch(`${serverUrl}/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ figmaUrl, daContext: context }),
+        body: JSON.stringify({ figmaUrl, daContext: { ...context, token } }),
       });
 
       if (!res.ok) throw new Error(`Failed to start job (HTTP ${res.status})`);
@@ -247,6 +247,6 @@ function buildUI(context) {
 }
 
 (async function init() {
-  const { context } = await DA_SDK;
-  buildUI(context);
+  const { context, token } = await DA_SDK;
+  buildUI(context, token);
 }());
