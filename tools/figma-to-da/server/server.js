@@ -67,43 +67,53 @@ app.get('/jobs/:id', (req, res) => {
 });
 
 async function runAgent(jobId, figmaUrl, daContext) {
-  const org = daContext?.org || '';
-  const site = daContext?.site || '';
-  const daBase = `https://da.live`;
+  const org = daContext?.org || 'adobecom';
+  const site = daContext?.site || 'proto-muse';
+  const token = daContext?.token || '';
 
   const prompt = `You are a DA page prototyper working in the proto-muse AEM Edge Delivery Services repository.
 
 Your task:
 1. Fetch the Figma design at: ${figmaUrl}
-   - Use the Figma REST API (GET /v1/files/:fileKey) or WebFetch to retrieve component structure.
-   - Extract the key sections, layout, text, and color tokens from the design.
+   - Use WebFetch with the Figma REST API (GET https://api.figma.com/v1/files/:fileKey) if a token is available.
+   - Extract key sections, layout, text, and color tokens from the design.
+   - If the Figma API returns 403, synthesise a reasonable layout based on the file name and node ID.
 
-2. Generate AEM block HTML + CSS files:
-   - Create a new page at /tools/prototypes/<slug>/index.html using AEM block conventions.
-   - For each major design section, create a matching block in /blocks/<block-name>/.
-   - Use semantic HTML, minimal inline styles, and CSS custom properties for colors/spacing.
+2. Generate AEM block JS + CSS files for each major design section.
+   - Create one block per section in /blocks/<block-name>/<block-name>.js and .css
+   - Use semantic HTML in the JS, CSS custom properties for colors/spacing.
+   - Do NOT create any HTML page files in git — pages live in DA, not the repo.
 
-3. Commit the generated files to a new git branch named prototype/<slug>:
-   git checkout -b prototype/<slug>
-   git add .
-   git commit -m "feat: prototype from Figma ${figmaUrl}"
-   git push origin prototype/<slug>
+3. Commit ONLY the /blocks/ files to a new git branch named prototype-<slug>
+   (use hyphens only, no slashes):
+   git checkout -b prototype-<slug>
+   git add blocks/
+   git commit -m "feat: prototype blocks from Figma ${figmaUrl}"
+   git push origin prototype-<slug>
 
-4. Compute the AEM preview URL. AEM EDS automatically serves any pushed branch.
-   The subdomain is the branch name with every "/" replaced by "-":
-   Branch "prototype/<slug>" → subdomain "prototype-<slug>"
-   Preview URL: https://prototype-<slug>--proto-muse--adobecom.aem.page/tools/prototypes/<slug>/
+4. Create the page in DA using the DA Source API.
+   First write the page HTML to /tmp/<slug>.html. The format is AEM EDS block HTML:
+   only a <body> containing <header></header>, <main>, and <footer></footer>.
+   Each block is a div whose class matches the block folder name:
+   <body>
+     <header></header>
+     <main>
+       <div class="block-name"><div><p>content</p></div></div>
+     </main>
+     <footer></footer>
+   </body>
 
-5. Trigger Helix to index the page by calling the admin preview API (no auth needed):
-   curl -X POST "https://admin.hlx.page/preview/adobecom/proto-muse/prototype-<slug>/tools/prototypes/<slug>/index"
+   Then upload it to DA (replace backslash-newlines with a single command):
+   curl -s -X POST https://admin.da.live/source/${org}/${site}/tools/prototypes/<slug>.html -H "Authorization: Bearer ${token}" -F "data=@/tmp/<slug>.html"
 
-6. Your FINAL line of output must be exactly:
-   PREVIEW_URL=https://prototype-<slug>--proto-muse--adobecom.aem.page/tools/prototypes/<slug>/
+   Parse the JSON response and extract .aem.previewUrl — that is your PREVIEW_URL.
 
-   This line must appear on its own with no other text after it.
-   Do not summarise or add any content after this line.
+5. Your FINAL line of output must be exactly:
+   PREVIEW_URL=<value of aem.previewUrl from the curl response>
+
+   No text after this line. No summary.
    Replace <slug> with a short kebab-case name derived from the Figma file title.
-   If the push fails, output: PREVIEW_URL=error on the last line and explain why above it.`;
+   If the DA upload fails, output PREVIEW_URL=error and show the curl response above it.`;
 
   let previewUrl;
 
