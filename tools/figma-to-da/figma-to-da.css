@@ -214,6 +214,47 @@ input::placeholder, textarea::placeholder { color: var(--gray-500); }
 
 .error-msg.visible { display: block; }
 
+/* ── Token usage stats ── */
+.token-stats {
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--gray-200);
+}
+
+.token-stats.visible { display: flex; }
+
+.token-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+  gap: 8px;
+}
+
+.token-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--gray-50);
+  border: 1px solid var(--gray-200);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+}
+
+.token-cell-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--gray-900);
+  font-variant-numeric: tabular-nums;
+}
+
+.token-cell-label {
+  font-size: 11px;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
 /* ── Agent output summary (shown on error) ── */
 .result-summary {
   font-family: 'SF Mono', 'Fira Code', monospace;

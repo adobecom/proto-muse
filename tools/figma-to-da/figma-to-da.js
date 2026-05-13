@@ -89,6 +89,7 @@ function buildUI(context, token, username) {
   const resultStage = el('span', { class: 'status-stage' }, 'Page published!');
   const resultSub = el('span', { class: 'status-sub' }, 'Your DA page is live.');
   const resultSummary = el('pre', { class: 'result-summary' });
+  const tokenStats = el('div', { class: 'token-stats' });
   const startOverBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Start over');
   const openBtn = el('button', { class: 'btn', type: 'button' }, 'Open preview');
 
@@ -99,6 +100,7 @@ function buildUI(context, token, username) {
     ),
     resultLink,
     resultSummary,
+    tokenStats,
     el('div', { class: 'result-actions' }, openBtn, startOverBtn),
   );
 
@@ -146,7 +148,14 @@ function buildUI(context, token, username) {
     setStage(0);
   }
 
-  function showResult(value, summary) {
+  function statCell(label, value) {
+    return el('div', { class: 'token-cell' },
+      el('span', { class: 'token-cell-value' }, value),
+      el('span', { class: 'token-cell-label' }, label),
+    );
+  }
+
+  function showResult(value, summary, usage) {
     statusPanel.classList.remove('visible');
     resultPanel.classList.add('visible');
     formCard.style.opacity = '1';
@@ -178,6 +187,28 @@ function buildUI(context, token, username) {
     } else {
       resultSummary.style.display = 'none';
     }
+
+    if (usage) {
+      const fmt = (n) => (n != null ? n.toLocaleString() : '—');
+      const fmtMs = (ms) => (ms >= 60000 ? `${(ms / 60000).toFixed(1)}m` : `${(ms / 1000).toFixed(1)}s`);
+      const total = (usage.inputTokens || 0) + (usage.outputTokens || 0);
+      tokenStats.replaceChildren(
+        el('span', { class: 'card-label' }, 'Token Usage'),
+        el('div', { class: 'token-grid' },
+          statCell('Input', fmt(usage.inputTokens)),
+          statCell('Output', fmt(usage.outputTokens)),
+          statCell('Cache read', fmt(usage.cacheReadTokens)),
+          statCell('Cache write', fmt(usage.cacheWriteTokens)),
+          statCell('Total', fmt(total)),
+          ...(usage.costUsd != null ? [statCell('Cost', `$${usage.costUsd.toFixed(4)}`)] : []),
+          ...(usage.numTurns != null ? [statCell('Turns', String(usage.numTurns))] : []),
+          ...(usage.durationMs != null ? [statCell('Duration', fmtMs(usage.durationMs))] : []),
+        ),
+      );
+      tokenStats.classList.add('visible');
+    } else {
+      tokenStats.classList.remove('visible');
+    }
   }
 
   function resetForm() {
@@ -189,6 +220,8 @@ function buildUI(context, token, username) {
     stageDots.forEach((d) => { d.className = 'stage-dot'; });
     resultSummary.style.display = 'none';
     resultSummary.textContent = '';
+    tokenStats.classList.remove('visible');
+    tokenStats.replaceChildren();
     clearError();
   }
 
@@ -209,7 +242,7 @@ function buildUI(context, token, username) {
 
           if (job.status === 'done') {
             clearInterval(interval);
-            resolve({ value: job.previewUrl, summary: job.summary });
+            resolve({ value: job.previewUrl, summary: job.summary, usage: job.usage });
           } else if (job.status === 'error') {
             clearInterval(interval);
             reject(new Error(job.error || 'Agent job failed.'));
@@ -250,8 +283,8 @@ function buildUI(context, token, username) {
 
       if (!res.ok) throw new Error(`Failed to start job (HTTP ${res.status})`);
       const { jobId } = await res.json();
-      const { value, summary } = await pollJob(serverUrl, jobId);
-      showResult(value, summary);
+      const { value, summary, usage } = await pollJob(serverUrl, jobId);
+      showResult(value, summary, usage);
     } catch (e) {
       statusPanel.classList.remove('visible');
       formCard.style.opacity = '1';

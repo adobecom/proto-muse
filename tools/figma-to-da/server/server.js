@@ -387,6 +387,7 @@ async function runAgent(jobId, figmaUrl, daContext) {
 
   let finalResult = '';
   let previewUrl;
+  let usageStats = null;
   const allMessages = [];
 
   for await (const msg of query({ prompt, options: queryOptions })) {
@@ -434,6 +435,15 @@ async function runAgent(jobId, figmaUrl, daContext) {
         const fallback = finalResult.match(/https:\/\/[^\s"')]+\.aem\.(live|page)[^\s"')]+/);
         if (fallback) previewUrl = fallback[0];
       }
+      usageStats = {
+        inputTokens: msg.usage?.input_tokens ?? 0,
+        outputTokens: msg.usage?.output_tokens ?? 0,
+        cacheReadTokens: msg.usage?.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: msg.usage?.cache_creation_input_tokens ?? 0,
+        costUsd: msg.total_cost_usd ?? null,
+        durationMs: msg.duration_ms ?? null,
+        numTurns: msg.num_turns ?? null,
+      };
     }
   }
 
@@ -449,11 +459,12 @@ async function runAgent(jobId, figmaUrl, daContext) {
       status: 'done',
       previewUrl: previewUrl || null,
       summary: summary.slice(0, 4000),
+      ...(usageStats && { usage: usageStats }),
     });
     return;
   }
 
-  jobs.set(jobId, { status: 'done', previewUrl });
+  jobs.set(jobId, { status: 'done', previewUrl, ...(usageStats && { usage: usageStats }) });
 }
 
 app.listen(PORT, () => {
