@@ -4,10 +4,10 @@ const STORAGE_KEY = 'figma-to-da:serverUrl';
 const POLL_INTERVAL = 3000;
 
 const STAGES = [
-  { id: 'extract', label: 'Extracting design' },
-  { id: 'generate', label: 'Generating code' },
-  { id: 'commit', label: 'Committing & pushing' },
-  { id: 'publish', label: 'Publishing to DA' },
+  { id: 'extract', label: 'Extracting design content' },
+  { id: 'generate', label: 'Building document' },
+  { id: 'upload', label: 'Uploading to DA' },
+  { id: 'publish', label: 'Previewing & publishing' },
 ];
 
 function el(tag, attrs = {}, ...children) {
@@ -54,7 +54,7 @@ function buildUI(context, token, username) {
 
   const errorMsg = el('div', { class: 'error-msg' });
 
-  const runBtn = el('button', { class: 'btn', type: 'button' }, 'Vibe Code →');
+  const runBtn = el('button', { class: 'btn', type: 'button' }, 'Prototype →');
 
   const formCard = el('div', { class: 'card' },
     el('span', { class: 'card-label' }, 'Design Source'),
@@ -85,18 +85,19 @@ function buildUI(context, token, username) {
   // ── Result card ──
   const resultIcon = el('span', { class: 'result-icon' }, '✓');
   const resultLink = el('a', { class: 'result-url', target: '_blank', rel: 'noopener' }, '');
+  const resultStage = el('span', { class: 'status-stage' }, 'Page published!');
+  const resultSub = el('span', { class: 'status-sub' }, 'Your DA page is live.');
+  const resultSummary = el('pre', { class: 'result-summary' });
   const startOverBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Start over');
   const openBtn = el('button', { class: 'btn', type: 'button' }, 'Open preview');
 
   const resultPanel = el('div', { class: 'card result-panel' },
     el('div', { class: 'status-body' },
       resultIcon,
-      el('div', { class: 'status-text' },
-        el('span', { class: 'status-stage' }, 'Page published!'),
-        el('span', { class: 'status-sub' }, 'Your DA page is live.'),
-      ),
+      el('div', { class: 'status-text' }, resultStage, resultSub),
     ),
     resultLink,
+    resultSummary,
     el('div', { class: 'result-actions' }, openBtn, startOverBtn),
   );
 
@@ -144,20 +145,37 @@ function buildUI(context, token, username) {
     setStage(0);
   }
 
-  function showResult(value) {
+  function showResult(value, summary) {
     statusPanel.classList.remove('visible');
     resultPanel.classList.add('visible');
     formCard.style.opacity = '1';
     stageDots.forEach((d) => d.classList.replace('active', 'done'));
     const isUrl = value && value.startsWith('http');
-    resultLink.textContent = value || '(no URL returned)';
+    const isError = !value || value === 'error';
+
+    resultIcon.textContent = isError ? '✗' : '✓';
+    resultIcon.style.color = isError ? '#d7373f' : '';
+    resultStage.textContent = isError ? 'Agent failed' : 'Page published!';
+    resultSub.textContent = isError ? 'Check the output below.' : 'Your DA page is live.';
+
     if (isUrl) {
+      resultLink.textContent = value;
       resultLink.href = value;
+      resultLink.style.display = '';
       openBtn.style.display = '';
       openBtn.onclick = () => window.open(value, '_blank', 'noopener');
     } else {
+      resultLink.textContent = '';
       resultLink.removeAttribute('href');
+      resultLink.style.display = 'none';
       openBtn.style.display = 'none';
+    }
+
+    if (summary) {
+      resultSummary.textContent = summary;
+      resultSummary.style.display = '';
+    } else {
+      resultSummary.style.display = 'none';
     }
   }
 
@@ -168,6 +186,8 @@ function buildUI(context, token, username) {
     statusPanel.classList.remove('visible');
     resultPanel.classList.remove('visible');
     stageDots.forEach((d) => { d.className = 'stage-dot'; });
+    resultSummary.style.display = 'none';
+    resultSummary.textContent = '';
     clearError();
   }
 
@@ -175,26 +195,20 @@ function buildUI(context, token, username) {
 
   // ── Polling ──
   async function pollJob(serverUrl, jobId) {
-    const stageCheckpoints = [0.2, 0.5, 0.75, 0.95];
-    let elapsed = 0;
-
     return new Promise((resolve, reject) => {
       const interval = setInterval(async () => {
-        elapsed += POLL_INTERVAL;
         try {
           const res = await fetch(`${serverUrl}/jobs/${jobId}`);
           if (!res.ok) throw new Error(`Server error ${res.status}`);
           const job = await res.json();
 
-          // Advance stage dots heuristically based on elapsed time
-          const totalExpected = 90000;
-          const progress = Math.min(elapsed / totalExpected, 0.99);
-          const stageIdx = stageCheckpoints.findIndex((t) => progress < t);
-          setStage(stageIdx === -1 ? STAGES.length - 1 : stageIdx);
+          if (typeof job.stage === 'number') {
+            setStage(job.stage);
+          }
 
           if (job.status === 'done') {
             clearInterval(interval);
-            resolve(job.previewUrl || job.summary || '(Agent finished — check server logs)');
+            resolve({ value: job.previewUrl, summary: job.summary });
           } else if (job.status === 'error') {
             clearInterval(interval);
             reject(new Error(job.error || 'Agent job failed.'));
@@ -235,8 +249,8 @@ function buildUI(context, token, username) {
 
       if (!res.ok) throw new Error(`Failed to start job (HTTP ${res.status})`);
       const { jobId } = await res.json();
-      const previewUrl = await pollJob(serverUrl, jobId);
-      showResult(previewUrl);
+      const { value, summary } = await pollJob(serverUrl, jobId);
+      showResult(value, summary);
     } catch (e) {
       statusPanel.classList.remove('visible');
       formCard.style.opacity = '1';
