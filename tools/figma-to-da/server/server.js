@@ -70,6 +70,8 @@ async function runAgent(jobId, figmaUrl, daContext) {
   const org = daContext?.org || 'adobecom';
   const site = daContext?.site || 'proto-muse';
   const token = daContext?.token || '';
+  const username = daContext?.username || 'anonymous';
+  const daPath = `drafts/${username}/<slug>`;
 
   const prompt = `You are a DA page prototyper working in the proto-muse AEM Edge Delivery Services repository.
 
@@ -92,6 +94,7 @@ Your task:
    git push origin prototype-<slug>
 
 4. Create the page in DA using the DA Source API.
+   The DA path for this page is: drafts/${username}/<slug>
    First write the page HTML to /tmp/<slug>.html. The format is AEM EDS block HTML:
    only a <body> containing <header></header>, <main>, and <footer></footer>.
    Each block is a div whose class matches the block folder name:
@@ -103,8 +106,11 @@ Your task:
      <footer></footer>
    </body>
 
-   Then upload it to DA (replace backslash-newlines with a single command):
-   curl -s -X POST https://admin.da.live/source/${org}/${site}/tools/prototypes/<slug>.html -H "Authorization: Bearer ${token}" -F "data=@/tmp/<slug>.html"
+   First ensure the user's drafts folder exists:
+   curl -s -X POST "https://admin.da.live/source/${org}/${site}/drafts/${username}" -H "Authorization: Bearer ${token}"
+
+   Then upload the page:
+   curl -s -X POST "https://admin.da.live/source/${org}/${site}/drafts/${username}/<slug>.html" -H "Authorization: Bearer ${token}" -F "data=@/tmp/<slug>.html"
 
    Parse the JSON response and extract .aem.previewUrl — that is your PREVIEW_URL.
 
