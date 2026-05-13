@@ -2,6 +2,7 @@
 coverage/*
 logs/*
 node_modules/*
+tools/figma-to-da/server/node_modules/*
 .DS_Store
 .idea
 .env
