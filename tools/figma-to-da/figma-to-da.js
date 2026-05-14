@@ -155,7 +155,7 @@ function buildUI(context, token, username) {
     );
   }
 
-  function showResult(value, summary, usage) {
+  function showResult(value, summary, blockBranch, usage) {
     statusPanel.classList.remove('visible');
     resultPanel.classList.add('visible');
     formCard.style.opacity = '1';
@@ -181,8 +181,11 @@ function buildUI(context, token, username) {
       openBtn.style.display = 'none';
     }
 
-    if (summary) {
-      resultSummary.textContent = summary;
+    const displaySummary = blockBranch
+      ? `Block branch: ${blockBranch}${summary ? `\n\n${summary}` : ''}`
+      : summary;
+    if (displaySummary) {
+      resultSummary.textContent = displaySummary;
       resultSummary.style.display = '';
     } else {
       resultSummary.style.display = 'none';
@@ -242,7 +245,12 @@ function buildUI(context, token, username) {
 
           if (job.status === 'done') {
             clearInterval(interval);
-            resolve({ value: job.previewUrl, summary: job.summary, usage: job.usage });
+            resolve({
+              value: job.previewUrl,
+              summary: job.summary,
+              blockBranch: job.blockBranch,
+              usage: job.usage,
+            });
           } else if (job.status === 'error') {
             clearInterval(interval);
             reject(new Error(job.error || 'Agent job failed.'));
@@ -283,8 +291,8 @@ function buildUI(context, token, username) {
 
       if (!res.ok) throw new Error(`Failed to start job (HTTP ${res.status})`);
       const { jobId } = await res.json();
-      const { value, summary, usage } = await pollJob(serverUrl, jobId);
-      showResult(value, summary, usage);
+      const { value, summary, blockBranch, usage } = await pollJob(serverUrl, jobId);
+      showResult(value, summary, blockBranch, usage);
     } catch (e) {
       statusPanel.classList.remove('visible');
       formCard.style.opacity = '1';

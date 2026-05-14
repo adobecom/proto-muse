@@ -22,9 +22,14 @@
 import express from 'express';
 import cors from 'cors';
 import { randomUUID } from 'crypto';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
+
+const execFileP = promisify(execFile);
+const git = (...args) => execFileP('git', ['-C', REPO_PATH, ...args], { timeout: 15_000 });
 
 const PORT = process.env.PORT || 3001;
 const REPO_PATH = process.env.REPO_PATH;
@@ -255,6 +260,9 @@ async function runAnalyzeAgent(jobId, figmaUrl) {
   }
 
   const slug = slugMatch[1];
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(slug)) {
+    throw new Error(`Analyze agent returned invalid slug: "${slug}" — must be lowercase alphanumeric + hyphens`);
+  }
   console.log(`[${jobId.slice(0, 8)}] analyze done — ${plan.length} sections, slug: ${slug}`);
   plan.forEach((e) => console.log(`  [${jobId.slice(0, 8)}]   ${e.section} → ${e.block}`));
 
@@ -338,6 +346,9 @@ async function runBlockBuilderAgent(jobId, entry, figmaUrl) {
 
   const doneMatch = finalResult.match(/BLOCK_DONE=(\S+)/);
   const resolvedName = doneMatch?.[1] ?? blockName;
+  if (!/^[a-z0-9][a-z0-9-]{0,79}$/.test(resolvedName)) {
+    throw new Error(`Block builder returned invalid block name: "${resolvedName}" — must be lowercase alphanumeric + hyphens`);
+  }
 
   console.log(`[${jobId.slice(0, 8)}] block-builder done — ${resolvedName}`);
   return { blockName: resolvedName, originalMarker: entry.block, usage };
@@ -345,7 +356,8 @@ async function runBlockBuilderAgent(jobId, entry, figmaUrl) {
 
 // ── Author Agent ──────────────────────────────────────────────────────────────
 
-function buildAuthorPrompt(plan, slug, builtBlocks, figmaUrl, figmaFileKey, figmaNodeId, org, site, token, username) {
+function buildAuthorPrompt(plan, draftSlug, builtBlocks, figmaUrl, figmaFileKey, figmaNodeId, org, site, token, username) {
+  const slug = draftSlug;
   const figmaAccess = buildFigmaAccess(figmaFileKey, figmaNodeId);
   const planJson = JSON.stringify(plan, null, 2);
   const builtBlocksList = builtBlocks.length > 0
@@ -540,10 +552,10 @@ ${legacyRefs.extractor}
 `;
 }
 
-async function runAuthorAgent(jobId, plan, slug, builtBlocks, figmaUrl, org, site, token, username) {
+async function runAuthorAgent(jobId, plan, draftSlug, builtBlocks, figmaUrl, org, site, token, username) {
   const { figmaFileKey, figmaNodeId } = parseFigmaUrl(figmaUrl);
   const prompt = buildAuthorPrompt(
-    plan, slug, builtBlocks, figmaUrl, figmaFileKey, figmaNodeId, org, site, token, username,
+    plan, draftSlug, builtBlocks, figmaUrl, figmaFileKey, figmaNodeId, org, site, token, username,
   );
 
   const stderrLines = [];
@@ -613,6 +625,27 @@ async function runAuthorAgent(jobId, plan, slug, builtBlocks, figmaUrl, org, sit
 
 // ── Pipeline Orchestrator ─────────────────────────────────────────────────────
 
+async function commitBuiltBlocks(jobId, builtBlocks, branchName) {
+  const { stdout } = await git('rev-parse', '--abbrev-ref', 'HEAD');
+  const originalBranch = stdout.trim();
+
+  try {
+    await git('checkout', '-b', branchName);
+    for (const blockName of builtBlocks) {
+      await git('add', `blocks/${blockName}`);
+    }
+    await git('commit', '-m', `feat: add ${builtBlocks.join(', ')} (figma-da run ${branchName})`);
+    try {
+      await git('push', '-u', 'origin', branchName);
+      console.log(`[${jobId.slice(0, 8)}] ${builtBlocks.length} block(s) → branch ${branchName} (pushed to origin)`);
+    } catch (pushErr) {
+      console.warn(`[${jobId.slice(0, 8)}] push failed — branch committed locally: ${pushErr.message}`);
+    }
+  } finally {
+    await git('checkout', originalBranch);
+  }
+}
+
 async function runPipeline(jobId, figmaUrl, daContext) {
   const org = daContext?.org || 'adobecom';
   const site = daContext?.site || 'proto-muse';
@@ -622,6 +655,10 @@ async function runPipeline(jobId, figmaUrl, daContext) {
   // Stage 0: analyze design → page plan
   jobs.set(jobId, { ...jobs.get(jobId), stage: 0 });
   const { plan, slug, usage: analyzeUsage } = await runAnalyzeAgent(jobId, figmaUrl);
+
+  const uid = jobId.slice(0, 6);
+  const draftSlug = `${slug}-${uid}`;
+  console.log(`[${jobId.slice(0, 8)}] uid: ${uid}, draft slug: ${draftSlug}`);
 
   // Stage 1: build new blocks in parallel
   const newEntries = plan.filter((e) => e.block.startsWith('NEW:'));
@@ -645,9 +682,22 @@ async function runPipeline(jobId, figmaUrl, daContext) {
   }
 
   // Stage 2-4: author agent extracts content, assembles + uploads DA document
+  // draftSlug (not slug) is passed so the DA document path carries the run UID
   const { previewUrl, summary, usage: authorUsage } = await runAuthorAgent(
-    jobId, plan, slug, builtBlocks, figmaUrl, org, site, token, username,
+    jobId, plan, draftSlug, builtBlocks, figmaUrl, org, site, token, username,
   );
+
+  // Commit new blocks to a branch named after draftSlug (after author agent so
+  // it can still read the block files from the working tree)
+  let blockBranch = null;
+  if (builtBlocks.length > 0) {
+    try {
+      await commitBuiltBlocks(jobId, builtBlocks, draftSlug);
+      blockBranch = draftSlug;
+    } catch (e) {
+      console.error(`[${jobId.slice(0, 8)}] git commit failed (non-fatal):`, e.message);
+    }
+  }
 
   const usage = aggregateUsage([analyzeUsage, ...buildUsages, authorUsage]);
 
@@ -655,13 +705,14 @@ async function runPipeline(jobId, figmaUrl, daContext) {
     jobs.set(jobId, {
       status: 'done',
       previewUrl: previewUrl || null,
+      ...(blockBranch && { blockBranch }),
       summary: summary.slice(0, 4000),
       usage,
     });
     return;
   }
 
-  jobs.set(jobId, { status: 'done', previewUrl, usage });
+  jobs.set(jobId, { status: 'done', previewUrl, ...(blockBranch && { blockBranch }), usage });
 }
 
 // ── Express routes ────────────────────────────────────────────────────────────
