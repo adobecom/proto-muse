@@ -246,7 +246,7 @@ async function runAnalyzeAgent(jobId, figmaUrl) {
     }
   }
 
-  const planMatch = finalResult.match(/PAGE_PLAN=(\[.*?\])/s);
+  const planMatch = finalResult.match(/PAGE_PLAN=(\[.*\])/s);
   const slugMatch = finalResult.match(/SLUG=(\S+)/);
 
   if (!planMatch) throw new Error('Analyze agent did not output a PAGE_PLAN sentinel.');
