@@ -2,7 +2,7 @@
 
 These blocks are provided by Milo (`libs/blocks/`) and are available on any proto-muse page without creating any new block files. They render with Milo's default styling.
 
-**Priority rule:** Prefer hub-* blocks (see block-inventory.md) when they cover the pattern — those are custom-styled for this site. Use Milo blocks when no hub-* block fits and the pattern calls for functionality that exists in Milo's library (accordion, tabs, etc.).
+**Priority rule:** Use a Milo block when it genuinely matches the visual pattern. Create a new custom block freely when no Milo block is a good fit — do not force an imperfect Milo block to avoid block creation. New blocks are expected when the design calls for something Milo doesn't provide well.
 
 ---
 
@@ -335,24 +335,19 @@ Each slide goes in a **separate section** tagged with the carousel name:
 
 ---
 
-## When to use Milo vs hub-* blocks
+## When to use Milo vs a new custom block
 
 | Scenario | Prefer |
 |---|---|
-| Hero banner matching proto-muse's dark gradient style | `hub-hero` |
-| Generic hero / marquee with lighter design | Milo `marquee` |
-| Editorial 2-col text + image | `hub-featured` |
-| Product grid with icons | `hub-cards` |
-| Full-width CTA band | `hub-cta` |
-| Key metrics / numbers | `hub-stats` |
-| Testimonial with avatar | `hub-quote` |
-| Logo scroll strip | `hub-marquee` |
+| Full-width hero banner with heading + CTAs | Milo `marquee` |
+| Generic hero with light or neutral design | Milo `marquee` |
 | FAQ / expandable items | Milo `accordion` |
 | Switchable content panels | Milo `tabs` |
 | Image/video slider | Milo `carousel` |
 | Standalone text section | Milo `text` |
 | N-column equal-content grid | Milo `columns` |
 | Standalone large image/video | Milo `media` |
-| Dismissible notification | Milo `aside (notification)` |
+| Dismissible notification / callout | Milo `aside (notification)` |
 | Icon + label feature grid | Milo `icon-block` |
 | Pull-quote, typographic | Milo `quote` |
+| Design doesn't fit any Milo block well | New custom block |

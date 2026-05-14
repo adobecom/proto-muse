@@ -426,3 +426,4 @@ The `section-metadata` div is structured as: row → key div + value div.
 - Do NOT use `Mobile-viewport` / `Tablet-viewport` rows inside tables — C1 blocks are CSS-responsive only
 - Do NOT use `<th>` in block tables — always `<td>`
 - Do NOT embed images as base64 — always use `content.da.live` URLs
+- For newly-created custom blocks, derive the DA table name from the block folder name using title-case: `icon-stats` → `Icon Stats`, `metric-strip` → `Metric Strip`
